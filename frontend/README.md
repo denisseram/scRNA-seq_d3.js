@@ -1,16 +1,31 @@
-# React + Vite
+## Interactive Dashboard for Single-Cell Data Visualization
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This project provides an **interactive dashboard** designed to visualize **single-cell RNA-seq data**.  
+As a demonstration, it replicates the figures presented in the paper:  
+> [**Pan-cancer single-cell RNA-seq identifies recurring programs of cellular heterogeneity**](https://www.nature.com/articles/s41588-020-00726-6)
 
-Currently, two official plugins are available:
+### Features
+- Interactive visualization of single-cell data  
+- Easy integration with your own datasets  
+- Reproduction of figures from a high-impact publication  
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+### How to Run
+You can use the provided example data or upload your own files.
 
-## React Compiler
+To use your own data:
+1. Prepare two `.txt` files:
+   - `Metadata.txt`
+   - `UMIcount_data.txt`
+2. Place them in the folder:
+  ./frontend/public/data/
+3. Run the preprocessing script:
+```bash
+python ./frontend/scripts/process_data.py 
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Data Format Requirements
 
-## Expanding the ESLint configuration
+- Metadata.txt: Contains cell-level annotations (e.g., cluster, sample, condition).
+- UMIcount_data.txt: Contains gene expression counts (UMI matrix).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Make sure both files are tab-delimited (.txt with \t separators).
