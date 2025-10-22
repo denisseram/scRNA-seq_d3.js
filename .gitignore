@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 
 frontend/public/data/*
+frontend/public/data/
+
