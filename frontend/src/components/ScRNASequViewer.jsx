@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import './ScRNASeqViewer.css'; // Import the CSS file
+import './ScRNASequViewer.css'; // Import the CSS file
 
 const ScRNASeqViewer = () => {
   const [data, setData] = useState(null);
