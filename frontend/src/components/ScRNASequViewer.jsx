@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as d3 from 'd3';
-import './ScRNASequViewer.css'; // Import the CSS file
 
 const ScRNASeqViewer = () => {
   const [data, setData] = useState(null);
@@ -11,20 +10,21 @@ const ScRNASeqViewer = () => {
   const [expressedGenes, setExpressedGenes] = useState([]);
   const [geneInput, setGeneInput] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
-  const [activeView, setActiveView] = useState('umap'); // 'umap' or 'boxplot'
+  const [activeView, setActiveView] = useState('umap');
   
-  // Boxplot specific states
   const [boxplotGene, setBoxplotGene] = useState('');
-  const [boxplotGroupBy, setBoxplotGroupBy] = useState('indication'); // 'indication' or 'cellline'
+  const [boxplotGroupBy, setBoxplotGroupBy] = useState('indication');
   const [selectedIndication, setSelectedIndication] = useState('all');
   const [availableIndications, setAvailableIndications] = useState([]);
   const [availableCellLines, setAvailableCellLines] = useState([]);
+  const [boxplotLoading, setBoxplotLoading] = useState(false);
+  const [hoveredCell, setHoveredCell] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   
-  const clusterPlotRef = useRef(null);
-  const genePlotsRef = useRef([]);
+  const clusterCanvasRef = useRef(null);
+  const geneCanvasRefs = useRef([]);
   const boxplotRef = useRef(null);
 
-  // Load real data from JSON files
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -38,19 +38,16 @@ const ScRNASeqViewer = () => {
         setData(jsonData);
         setAvailableGenes(jsonData.genes);
         
-        // Filter only genes that have expression data
         const genesWithExpression = jsonData.genes.filter(gene => 
           jsonData.expressionData && jsonData.expressionData[gene]
         );
         setExpressedGenes(genesWithExpression);
         
-        // Extract unique indications and cell lines
         const indications = [...new Set(jsonData.cells.map(c => c.indication).filter(Boolean))];
         const cellLines = [...new Set(jsonData.cells.map(c => c.cellline).filter(Boolean))];
         setAvailableIndications(indications);
         setAvailableCellLines(cellLines);
         
-        // Set default genes
         const defaultGenes = ['CD79A', 'MS4A1'].filter(g => 
           genesWithExpression.includes(g)
         );
@@ -58,7 +55,6 @@ const ScRNASeqViewer = () => {
           (genesWithExpression.length > 0 ? [genesWithExpression[0]] : [])
         );
         
-        // Set default boxplot gene
         const defaultBoxplotGene = genesWithExpression.includes('ERBB2') ? 'ERBB2' : genesWithExpression[0];
         setBoxplotGene(defaultBoxplotGene);
         
@@ -73,60 +69,73 @@ const ScRNASeqViewer = () => {
     loadData();
   }, []);
 
-  // Draw cluster UMAP
   useEffect(() => {
-    if (!data || !clusterPlotRef.current || activeView !== 'umap') return;
-    
-    drawUMAP(clusterPlotRef.current, data.cells, null, 'Cluster UMAP', true);
+    if (!data || !clusterCanvasRef.current || activeView !== 'umap') return;
+    drawUMAPCanvas(clusterCanvasRef.current, data.cells, null, 'Cluster UMAP', true);
   }, [data, activeView]);
 
-  // Draw gene expression UMAPs
   useEffect(() => {
     if (!data || selectedGenes.length === 0 || activeView !== 'umap') return;
     
     selectedGenes.forEach((gene, idx) => {
-      if (genePlotsRef.current[idx] && data.expressionData[gene]) {
+      if (geneCanvasRefs.current[idx] && data.expressionData[gene]) {
         const cellsWithExpression = data.cells.map((cell, i) => ({
           ...cell,
           expression: data.expressionData[gene][i]
         }));
-        drawUMAP(genePlotsRef.current[idx], cellsWithExpression, gene, `Expression of ${gene}`, false);
+        drawUMAPCanvas(geneCanvasRefs.current[idx], cellsWithExpression, gene, `Expression of ${gene}`, false);
       }
     });
   }, [data, selectedGenes, activeView]);
 
-  // Draw boxplot
   useEffect(() => {
     if (!data || !boxplotRef.current || activeView !== 'boxplot' || !boxplotGene) return;
     
-    drawBoxplot();
+    setBoxplotLoading(true);
+    setTimeout(() => {
+      drawBoxplot();
+      setBoxplotLoading(false);
+    }, 50);
   }, [data, activeView, boxplotGene, boxplotGroupBy, selectedIndication]);
 
-  const drawUMAP = (container, cells, gene, title, isCluster) => {
-    d3.select(container).selectAll('*').remove();
+  const drawUMAPCanvas = (container, cells, gene, title, isCluster) => {
+    // Clear container
+    container.innerHTML = '';
     
     const margin = { top: 60, right: 150, bottom: 60, left: 60 };
     const width = 800 - margin.left - margin.right;
     const height = 450 - margin.top - margin.bottom;
+    const totalWidth = width + margin.left + margin.right;
+    const totalHeight = height + margin.top + margin.bottom;
     
-    const svg = d3.select(container)
-      .append('svg')
-      .attr('width', width + margin.left + margin.right)
-      .attr('height', height + margin.top + margin.bottom)
-      .append('g')
-      .attr('transform', `translate(${margin.left},${margin.top})`);
+    // Create canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = totalWidth * 2; // 2x for retina
+    canvas.height = totalHeight * 2;
+    canvas.style.width = `${totalWidth}px`;
+    canvas.style.height = `${totalHeight}px`;
+    container.appendChild(canvas);
     
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2); // Scale for retina
+    
+    // Clear canvas
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, totalWidth, totalHeight);
+    
+    // Calculate scales
     const xExtent = d3.extent(cells, d => d.umap1);
     const yExtent = d3.extent(cells, d => d.umap2);
     
     const xScale = d3.scaleLinear()
       .domain([xExtent[0] - 1, xExtent[1] + 1])
-      .range([0, width]);
+      .range([margin.left, margin.left + width]);
     
     const yScale = d3.scaleLinear()
       .domain([yExtent[0] - 1, yExtent[1] + 1])
-      .range([height, 0]);
+      .range([margin.top + height, margin.top]);
     
+    // Setup color scales
     let colorScale;
     if (isCluster) {
       const clusters = [...new Set(cells.map(d => d.cluster))].sort();
@@ -140,55 +149,39 @@ const ScRNASeqViewer = () => {
         .interpolator(d3.interpolateMagma);
     }
     
-    const tooltip = d3.select('body')
-      .selectAll('.umap-tooltip')
-      .data([0])
-      .join('div')
-      .attr('class', 'umap-tooltip')
+    // Draw points
+    cells.forEach(cell => {
+      const x = xScale(cell.umap1);
+      const y = yScale(cell.umap2);
+      const color = isCluster ? colorScale(cell.cluster) : colorScale(cell.expression);
+      
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.7;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    });
+    
+    // Draw axes and labels using SVG overlay
+    const svg = d3.select(container)
+      .append('svg')
+      .attr('width', totalWidth)
+      .attr('height', totalHeight)
       .style('position', 'absolute')
-      .style('background', 'rgba(0, 0, 0, 0.8)')
-      .style('color', 'white')
-      .style('padding', '8px 12px')
-      .style('border-radius', '4px')
-      .style('font-size', '12px')
+      .style('top', 0)
+      .style('left', 0)
       .style('pointer-events', 'none')
-      .style('opacity', 0)
-      .style('z-index', 1000);
+      .append('g');
     
-    svg.selectAll('circle')
-      .data(cells)
-      .join('circle')
-      .attr('cx', d => xScale(d.umap1))
-      .attr('cy', d => yScale(d.umap2))
-      .attr('r', 3)
-      .attr('fill', d => isCluster ? colorScale(d.cluster) : colorScale(d.expression))
-      .attr('opacity', 0.7)
-      .attr('stroke', 'white')
-      .attr('stroke-width', 0.5)
-      .on('mouseover', (event, d) => {
-        const tooltipContent = `
-          <strong>Cell:</strong> ${d.id}<br/>
-          <strong>Cluster:</strong> ${d.cluster}
-          ${d.cellline ? `<br/><strong>Cell Line:</strong> ${d.cellline}` : ''}
-          ${d.indication ? `<br/><strong>Indication:</strong> ${d.indication}` : ''}
-          ${!isCluster ? `<br/><strong>Expression:</strong> ${d.expression.toFixed(3)}` : ''}
-        `;
-        tooltip.style('opacity', 1).html(tooltipContent);
-      })
-      .on('mousemove', (event) => {
-        tooltip
-          .style('left', (event.pageX + 10) + 'px')
-          .style('top', (event.pageY - 10) + 'px');
-      })
-      .on('mouseout', () => {
-        tooltip.style('opacity', 0);
-      });
-    
-    const xAxis = d3.axisBottom(xScale).ticks(5);
-    const yAxis = d3.axisLeft(yScale).ticks(5);
-    
+    // X axis
+    const xAxis = d3.axisBottom(xScale.copy().range([0, width])).ticks(5);
     svg.append('g')
-      .attr('transform', `translate(0,${height})`)
+      .attr('transform', `translate(${margin.left},${margin.top + height})`)
+      .style('pointer-events', 'all')
       .call(xAxis)
       .append('text')
       .attr('x', width / 2)
@@ -198,7 +191,11 @@ const ScRNASeqViewer = () => {
       .attr('text-anchor', 'middle')
       .text('UMAP 1');
     
+    // Y axis
+    const yAxis = d3.axisLeft(yScale.copy().range([height, 0])).ticks(5);
     svg.append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`)
+      .style('pointer-events', 'all')
       .call(yAxis)
       .append('text')
       .attr('transform', 'rotate(-90)')
@@ -209,18 +206,20 @@ const ScRNASeqViewer = () => {
       .attr('text-anchor', 'middle')
       .text('UMAP 2');
     
+    // Title
     svg.append('text')
-      .attr('x', width / 2)
-      .attr('y', -30)
+      .attr('x', margin.left + width / 2)
+      .attr('y', 30)
       .attr('text-anchor', 'middle')
       .attr('font-size', '18px')
       .attr('font-weight', 'bold')
       .text(title);
     
+    // Legend
     if (isCluster) {
       const clusters = [...new Set(cells.map(d => d.cluster))].sort();
       const legend = svg.append('g')
-        .attr('transform', `translate(${width + 20}, 0)`);
+        .attr('transform', `translate(${margin.left + width + 20}, ${margin.top})`);
       
       legend.selectAll('rect')
         .data(clusters)
@@ -248,18 +247,17 @@ const ScRNASeqViewer = () => {
         .range([legendHeight, 0]);
       
       const legend = svg.append('g')
-        .attr('transform', `translate(${width + 20}, ${(height - legendHeight) / 2})`);
+        .attr('transform', `translate(${margin.left + width + 20}, ${margin.top + (height - legendHeight) / 2})`);
       
       const gradientId = `gradient-${gene || 'expr'}`;
-      const gradient = svg.append('defs')
+      svg.append('defs')
         .append('linearGradient')
         .attr('id', gradientId)
         .attr('x1', '0%')
         .attr('x2', '0%')
         .attr('y1', '100%')
-        .attr('y2', '0%');
-      
-      gradient.selectAll('stop')
+        .attr('y2', '0%')
+        .selectAll('stop')
         .data(d3.range(0, 1.01, 0.1))
         .join('stop')
         .attr('offset', d => `${d * 100}%`)
@@ -280,6 +278,43 @@ const ScRNASeqViewer = () => {
         .attr('font-size', '12px')
         .text('Expression');
     }
+    
+    // Add mouse interaction
+    canvas.style.pointerEvents = 'all';
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const dataX = xScale.invert(x);
+      const dataY = yScale.invert(y);
+      
+      // Find closest cell
+      let closestCell = null;
+      let minDist = Infinity;
+      
+      cells.forEach(cell => {
+        const dist = Math.sqrt(
+          Math.pow(cell.umap1 - dataX, 2) + 
+          Math.pow(cell.umap2 - dataY, 2)
+        );
+        if (dist < minDist && dist < 0.5) { // threshold
+          minDist = dist;
+          closestCell = cell;
+        }
+      });
+      
+      if (closestCell) {
+        setHoveredCell(closestCell);
+        setTooltipPos({ x: e.clientX, y: e.clientY });
+      } else {
+        setHoveredCell(null);
+      }
+    });
+    
+    canvas.addEventListener('mouseleave', () => {
+      setHoveredCell(null);
+    });
   };
 
   const drawBoxplot = () => {
@@ -287,25 +322,29 @@ const ScRNASeqViewer = () => {
     
     if (!data.expressionData[boxplotGene]) return;
     
-    // Filter cells based on selection
     let filteredCells = data.cells;
     if (boxplotGroupBy === 'cellline' && selectedIndication !== 'all') {
       filteredCells = data.cells.filter(c => c.indication === selectedIndication);
     }
     
-    // Prepare data with log2 expression
-    const cellData = filteredCells.map((cell, i) => {
+    const cellData = [];
+    filteredCells.forEach((cell) => {
       const originalIndex = data.cells.indexOf(cell);
       const expression = data.expressionData[boxplotGene][originalIndex];
-      return {
-        ...cell,
-        expression: expression,
-        log2Expression: Math.log2(expression + 1),
-        group: boxplotGroupBy === 'indication' ? cell.indication : cell.cellline
-      };
-    }).filter(d => d.group); // Filter out cells without group info
+      const group = boxplotGroupBy === 'indication' ? cell.indication : cell.cellline;
+      
+      if (group && expression !== undefined && expression !== null && !isNaN(expression)) {
+        cellData.push({
+          id: cell.id,
+          expression: expression,
+          log2Expression: Math.log2(expression + 1),
+          group: group
+        });
+      }
+    });
     
-    // Group data
+    if (cellData.length === 0) return;
+    
     const groupedData = d3.group(cellData, d => d.group);
     const groups = Array.from(groupedData.keys()).sort();
     
@@ -320,7 +359,6 @@ const ScRNASeqViewer = () => {
       .append('g')
       .attr('transform', `translate(${margin.left},${margin.top})`);
     
-    // Scales
     const xScale = d3.scaleBand()
       .domain(groups)
       .range([0, width])
@@ -331,7 +369,6 @@ const ScRNASeqViewer = () => {
       .domain([0, yExtent[1] * 1.1])
       .range([height, 0]);
     
-    // Calculate boxplot statistics
     const boxplotData = groups.map(group => {
       const values = groupedData.get(group).map(d => d.log2Expression).sort(d3.ascending);
       const q1 = d3.quantile(values, 0.25);
@@ -344,13 +381,11 @@ const ScRNASeqViewer = () => {
       return { group, min, q1, median, q3, max, values: groupedData.get(group) };
     });
     
-    // Draw boxes
     const boxWidth = xScale.bandwidth();
     
     boxplotData.forEach(d => {
       const x = xScale(d.group);
       
-      // Vertical line (min to max)
       svg.append('line')
         .attr('x1', x + boxWidth / 2)
         .attr('x2', x + boxWidth / 2)
@@ -359,7 +394,6 @@ const ScRNASeqViewer = () => {
         .attr('stroke', '#666')
         .attr('stroke-width', 1);
       
-      // Box (Q1 to Q3)
       svg.append('rect')
         .attr('x', x)
         .attr('y', yScale(d.q3))
@@ -370,7 +404,6 @@ const ScRNASeqViewer = () => {
         .attr('stroke', '#2c5aa0')
         .attr('stroke-width', 1.5);
       
-      // Median line
       svg.append('line')
         .attr('x1', x)
         .attr('x2', x + boxWidth)
@@ -379,7 +412,6 @@ const ScRNASeqViewer = () => {
         .attr('stroke', '#000')
         .attr('stroke-width', 2);
       
-      // Min/max whiskers
       [d.min, d.max].forEach(val => {
         svg.append('line')
           .attr('x1', x + boxWidth * 0.25)
@@ -391,22 +423,32 @@ const ScRNASeqViewer = () => {
       });
     });
     
-    // Add jittered points (strip plot)
     const jitterWidth = xScale.bandwidth() * 0.4;
+    const maxPointsPerGroup = 500;
     
     boxplotData.forEach(d => {
-      svg.selectAll(`.point-${d.group}`)
-        .data(d.values)
+      let pointsToPlot = d.values;
+      if (pointsToPlot.length > maxPointsPerGroup) {
+        const step = Math.floor(pointsToPlot.length / maxPointsPerGroup);
+        pointsToPlot = pointsToPlot.filter((_, i) => i % step === 0);
+      }
+      
+      const jitteredData = pointsToPlot.map(cell => ({
+        x: xScale(d.group) + xScale.bandwidth() / 2 + (Math.random() - 0.5) * jitterWidth,
+        y: yScale(cell.log2Expression)
+      }));
+      
+      svg.selectAll(`.point-${d.group.replace(/\s+/g, '-')}`)
+        .data(jitteredData)
         .join('circle')
-        .attr('class', `point-${d.group}`)
-        .attr('cx', () => xScale(d.group) + xScale.bandwidth() / 2 + (Math.random() - 0.5) * jitterWidth)
-        .attr('cy', cell => yScale(cell.log2Expression))
-        .attr('r', 2)
+        .attr('class', `point-${d.group.replace(/\s+/g, '-')}`)
+        .attr('cx', p => p.x)
+        .attr('cy', p => p.y)
+        .attr('r', 1.5)
         .attr('fill', 'black')
-        .attr('opacity', 0.3);
+        .attr('opacity', 0.4);
     });
     
-    // Axes
     svg.append('g')
       .attr('transform', `translate(0,${height})`)
       .call(d3.axisBottom(xScale))
@@ -419,7 +461,6 @@ const ScRNASeqViewer = () => {
     svg.append('g')
       .call(d3.axisLeft(yScale));
     
-    // Labels
     svg.append('text')
       .attr('x', width / 2)
       .attr('y', -50)
@@ -456,10 +497,10 @@ const ScRNASeqViewer = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="text-xl mb-4">Loading scRNA-seq data...</div>
-          <div className="text-gray-500">This may take a moment</div>
+      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh'}}>
+        <div style={{textAlign: 'center'}}>
+          <div style={{fontSize: '1.25rem', marginBottom: '1rem'}}>Loading scRNA-seq data...</div>
+          <div style={{color: '#6b7280'}}>This may take a moment</div>
         </div>
       </div>
     );
@@ -467,12 +508,12 @@ const ScRNASeqViewer = () => {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-          <h2 className="text-xl font-bold text-red-800 mb-2">Error Loading Data</h2>
-          <p className="text-red-600">{error}</p>
-          <p className="text-sm text-gray-600 mt-4">
-            Make sure the data files are in the <code className="bg-gray-100 px-1 rounded">public/data/</code> directory.
+      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh'}}>
+        <div style={{background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', padding: '1.5rem', maxWidth: '28rem'}}>
+          <h2 style={{fontSize: '1.25rem', fontWeight: 'bold', color: '#991b1b', marginBottom: '0.5rem'}}>Error Loading Data</h2>
+          <p style={{color: '#dc2626'}}>{error}</p>
+          <p style={{fontSize: '0.875rem', color: '#4b5563', marginTop: '1rem'}}>
+            Make sure the data files are in the <code style={{background: '#f3f4f6', padding: '0.125rem 0.25rem', borderRadius: '0.25rem'}}>public/data/</code> directory.
           </p>
         </div>
       </div>
@@ -480,236 +521,262 @@ const ScRNASeqViewer = () => {
   }
 
   return (
-    <div className="scrna-container">
-      <div className="scrna-wrapper">
-        <h1 className="scrna-header">
-          scRNA-seq Visualization
-        </h1>
-        
-        {/* Navigation Tabs */}
-        <div style={{marginBottom: '2rem', borderBottom: '2px solid #e5e7eb'}}>
-          <div style={{display: 'flex', gap: '1rem'}}>
-            <button
-              onClick={() => setActiveView('umap')}
-              style={{
-                padding: '0.75rem 1.5rem',
-                background: activeView === 'umap' ? '#3b82f6' : 'transparent',
-                color: activeView === 'umap' ? 'white' : '#4b5563',
-                border: 'none',
-                borderBottom: activeView === 'umap' ? '3px solid #2563eb' : '3px solid transparent',
-                fontWeight: activeView === 'umap' ? '600' : '500',
-                cursor: 'pointer',
-                fontSize: '1rem',
-                transition: 'all 0.2s'
-              }}
-            >
-              UMAP Visualization
-            </button>
-            <button
-              onClick={() => setActiveView('boxplot')}
-              style={{
-                padding: '0.75rem 1.5rem',
-                background: activeView === 'boxplot' ? '#3b82f6' : 'transparent',
-                color: activeView === 'boxplot' ? 'white' : '#4b5563',
-                border: 'none',
-                borderBottom: activeView === 'boxplot' ? '3px solid #2563eb' : '3px solid transparent',
-                fontWeight: activeView === 'boxplot' ? '600' : '500',
-                cursor: 'pointer',
-                fontSize: '1rem',
-                transition: 'all 0.2s'
-              }}
-            >
-              Gene Expression Boxplot
-            </button>
-          </div>
+    <div style={{padding: '2rem', maxWidth: '1600px', margin: '0 auto'}}>
+      <h1 style={{fontSize: '2rem', fontWeight: 'bold', marginBottom: '2rem'}}>
+        scRNA-seq Visualization
+      </h1>
+      
+      {hoveredCell && (
+        <div style={{
+          position: 'fixed',
+          left: `${tooltipPos.x + 10}px`,
+          top: `${tooltipPos.y - 10}px`,
+          background: 'rgba(0, 0, 0, 0.8)',
+          color: 'white',
+          padding: '8px 12px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          pointerEvents: 'none',
+          zIndex: 1000
+        }}>
+          <strong>Cell:</strong> {hoveredCell.id}<br/>
+          <strong>Cluster:</strong> {hoveredCell.cluster}
+          {hoveredCell.cellline && <><br/><strong>Cell Line:</strong> {hoveredCell.cellline}</>}
+          {hoveredCell.indication && <><br/><strong>Indication:</strong> {hoveredCell.indication}</>}
+          {hoveredCell.expression !== undefined && <><br/><strong>Expression:</strong> {hoveredCell.expression.toFixed(3)}</>}
         </div>
-        
-        <div className="scrna-layout">
-          {/* Sidebar - UMAP View */}
-          {activeView === 'umap' && (
-            <div className="scrna-sidebar">
-              <div className="dataset-info-box">
-                <h3>Dataset Information</h3>
-                <p><strong>Cells:</strong> {data.cells.length.toLocaleString()}</p>
-                <p><strong>Clusters:</strong> {new Set(data.cells.map(c => c.cluster)).size}</p>
-                <p><strong>Total genes:</strong> {data.genes.length.toLocaleString()}</p>
-                <p><strong>Expressed genes:</strong> {expressedGenes.length.toLocaleString()}</p>
-              </div>
-              
-              <div className="gene-selection-box">
-                <h2 className="gene-selection-title">Gene Selection</h2>
-                
-                <div className="selected-genes-container">
-                  <label className="selected-genes-label">
-                    Selected genes ({selectedGenes.length}/5):
-                  </label>
-                  <div className="selected-genes-list">
-                    {selectedGenes.map(gene => (
-                      <span key={gene} className="gene-tag">
-                        {gene}
-                        <button
-                          onClick={() => removeGene(gene)}
-                          className="gene-tag-remove"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                
-                {selectedGenes.length < 5 && (
-                  <div className="gene-input-container">
-                    <input
-                      type="text"
-                      value={geneInput}
-                      onChange={(e) => {
-                        setGeneInput(e.target.value);
-                        setShowDropdown(true);
-                      }}
-                      onFocus={() => setShowDropdown(true)}
-                      onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-                      placeholder="Search expressed genes..."
-                      className="gene-input"
-                    />
-                    
-                    {showDropdown && geneInput && filteredGenes.length > 0 && (
-                      <div className="gene-dropdown">
-                        {filteredGenes.map(gene => (
-                          <div
-                            key={gene}
-                            onClick={() => addGene(gene)}
-                            className="gene-dropdown-item"
-                          >
-                            {gene}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    
-                    {showDropdown && geneInput && filteredGenes.length === 0 && (
-                      <div className="gene-dropdown">
-                        <div className="gene-dropdown-item" style={{color: '#6b7280', cursor: 'default'}}>
-                          No expressed genes found
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              <div className="info-box">
-                💡 Only genes with expression data are available for selection. Hover over points to see cell details.
-              </div>
+      )}
+      
+      <div style={{marginBottom: '2rem', borderBottom: '2px solid #e5e7eb'}}>
+        <div style={{display: 'flex', gap: '1rem'}}>
+          <button
+            onClick={() => setActiveView('umap')}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeView === 'umap' ? '#3b82f6' : 'transparent',
+              color: activeView === 'umap' ? 'white' : '#4b5563',
+              border: 'none',
+              borderBottom: activeView === 'umap' ? '3px solid #2563eb' : '3px solid transparent',
+              fontWeight: activeView === 'umap' ? '600' : '500',
+              cursor: 'pointer',
+              fontSize: '1rem',
+              transition: 'all 0.2s'
+            }}
+          >
+            UMAP Visualization
+          </button>
+          <button
+            onClick={() => setActiveView('boxplot')}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeView === 'boxplot' ? '#3b82f6' : 'transparent',
+              color: activeView === 'boxplot' ? 'white' : '#4b5563',
+              border: 'none',
+              borderBottom: activeView === 'boxplot' ? '3px solid #2563eb' : '3px solid transparent',
+              fontWeight: activeView === 'boxplot' ? '600' : '500',
+              cursor: 'pointer',
+              fontSize: '1rem',
+              transition: 'all 0.2s'
+            }}
+          >
+            Gene Expression Boxplot
+          </button>
+        </div>
+      </div>
+      
+      <div style={{display: 'flex', gap: '2rem'}}>
+        {activeView === 'umap' && (
+          <div style={{width: '300px', flexShrink: 0}}>
+            <div style={{background: '#f3f4f6', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem'}}>
+              <h3 style={{fontWeight: '600', marginBottom: '0.5rem'}}>Dataset Information</h3>
+              <p><strong>Cells:</strong> {data.cells.length.toLocaleString()}</p>
+              <p><strong>Clusters:</strong> {new Set(data.cells.map(c => c.cluster)).size}</p>
+              <p><strong>Total genes:</strong> {data.genes.length.toLocaleString()}</p>
+              <p><strong>Expressed genes:</strong> {expressedGenes.length.toLocaleString()}</p>
             </div>
-          )}
-          
-          {/* Sidebar - Boxplot View */}
-          {activeView === 'boxplot' && (
-            <div className="scrna-sidebar">
-              <div className="dataset-info-box">
-                <h3>Dataset Information</h3>
-                <p><strong>Cells:</strong> {data.cells.length.toLocaleString()}</p>
-                <p><strong>Indications:</strong> {availableIndications.length}</p>
-                <p><strong>Cell Lines:</strong> {availableCellLines.length}</p>
-                <p><strong>Expressed genes:</strong> {expressedGenes.length.toLocaleString()}</p>
-              </div>
-              
-              <div className="gene-selection-box">
-                <h2 className="gene-selection-title">Boxplot Settings</h2>
-                
-                <div style={{marginBottom: '1.5rem'}}>
-                  <label className="selected-genes-label">Select Gene:</label>
-                  <select
-                    value={boxplotGene}
-                    onChange={(e) => setBoxplotGene(e.target.value)}
-                    className="gene-input"
-                    style={{cursor: 'pointer'}}
-                  >
-                    {expressedGenes.map(gene => (
-                      <option key={gene} value={gene}>{gene}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div style={{marginBottom: '1.5rem'}}>
-                  <label className="selected-genes-label">Group By:</label>
-                  <select
-                    value={boxplotGroupBy}
-                    onChange={(e) => setBoxplotGroupBy(e.target.value)}
-                    className="gene-input"
-                    style={{cursor: 'pointer'}}
-                  >
-                    <option value="indication">Indication</option>
-                    <option value="cellline">Cell Line</option>
-                  </select>
-                </div>
-                
-                {boxplotGroupBy === 'cellline' && (
-                  <div style={{marginBottom: '1.5rem'}}>
-                    <label className="selected-genes-label">Filter by Indication:</label>
-                    <select
-                      value={selectedIndication}
-                      onChange={(e) => setSelectedIndication(e.target.value)}
-                      className="gene-input"
-                      style={{cursor: 'pointer'}}
-                    >
-                      <option value="all">All Indications</option>
-                      {availableIndications.map(ind => (
-                        <option key={ind} value={ind}>{ind}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-              
-              <div className="info-box">
-                📊 Boxplot shows log2(expression + 1) values. Black dots represent individual cells with jitter for visibility.
-              </div>
-            </div>
-          )}
-          
-          {/* Main content */}
-          <div className="scrna-main">
-            {activeView === 'umap' && (
-              <>
-                <div className="plot-container">
-                  <div ref={clusterPlotRef}></div>
-                </div>
-                
-                {selectedGenes.length > 0 && (
-                  <div className="gene-plots-section">
-                    <h2 className="gene-plots-title">Gene Expression UMAP</h2>
-                    {selectedGenes.map((gene, idx) => (
-                      <div key={gene} className="plot-container">
-                        {data.expressionData[gene] ? (
-                          <div ref={el => genePlotsRef.current[idx] = el}></div>
-                        ) : (
-                          <div className="text-center py-12 text-gray-500">
-                            <p className="text-lg">Expression data not available for {gene}</p>
-                            <p className="text-sm mt-2">This gene may not be in the exported dataset</p>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {selectedGenes.length === 0 && (
-                  <div className="empty-state">
-                    <h3>No genes selected</h3>
-                    <p>Select genes from the sidebar to visualize their expression.</p>
-                  </div>
-                )}
-              </>
-            )}
             
-            {activeView === 'boxplot' && (
-              <div className="plot-container">
-                <div ref={boxplotRef}></div>
+            <div style={{background: 'white', border: '1px solid #e5e7eb', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem'}}>
+              <h2 style={{fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem'}}>Gene Selection</h2>
+              
+              <div style={{marginBottom: '1rem'}}>
+                <label style={{display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem'}}>
+                  Selected genes ({selectedGenes.length}/5):
+                </label>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem'}}>
+                  {selectedGenes.map(gene => (
+                    <span key={gene} style={{background: '#3b82f6', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                      {gene}
+                      <button
+                        onClick={() => removeGene(gene)}
+                        style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.25rem', padding: 0, lineHeight: 1}}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
               </div>
-            )}
+              
+              {selectedGenes.length < 5 && (
+                <div style={{position: 'relative'}}>
+                  <input
+                    type="text"
+                    value={geneInput}
+                    onChange={(e) => {
+                      setGeneInput(e.target.value);
+                      setShowDropdown(true);
+                    }}
+                    onFocus={() => setShowDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+                    placeholder="Search expressed genes..."
+                    style={{width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem'}}
+                  />
+                  
+                  {showDropdown && geneInput && filteredGenes.length > 0 && (
+                    <div style={{position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #d1d5db', borderRadius: '0.375rem', marginTop: '0.25rem', maxHeight: '200px', overflowY: 'auto', zIndex: 10}}>
+                      {filteredGenes.map(gene => (
+                        <div
+                          key={gene}
+                          onClick={() => addGene(gene)}
+                          style={{padding: '0.5rem', cursor: 'pointer', fontSize: '0.875rem', borderBottom: '1px solid #f3f4f6'}}
+                          onMouseEnter={(e) => e.target.style.background = '#f3f4f6'}
+                          onMouseLeave={(e) => e.target.style.background = 'white'}
+                        >
+                          {gene}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {showDropdown && geneInput && filteredGenes.length === 0 && (
+                    <div style={{position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #d1d5db', borderRadius: '0.375rem', marginTop: '0.25rem', zIndex: 10}}>
+                      <div style={{padding: '0.5rem', color: '#6b7280', fontSize: '0.875rem'}}>
+                        No expressed genes found
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            <div style={{background: '#eff6ff', border: '1px solid #bfdbfe', padding: '1rem', borderRadius: '0.5rem', fontSize: '0.875rem'}}>
+              💡 Only genes with expression data are available for selection. Hover over points to see cell details.
+            </div>
           </div>
+        )}
+        
+        {activeView === 'boxplot' && (
+          <div style={{width: '300px', flexShrink: 0}}>
+            <div style={{background: '#f3f4f6', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem'}}>
+              <h3 style={{fontWeight: '600', marginBottom: '0.5rem'}}>Dataset Information</h3>
+              <p><strong>Cells:</strong> {data.cells.length.toLocaleString()}</p>
+              <p><strong>Indications:</strong> {availableIndications.length}</p>
+              <p><strong>Cell Lines:</strong> {availableCellLines.length}</p>
+              <p><strong>Expressed genes:</strong> {expressedGenes.length.toLocaleString()}</p>
+            </div>
+            
+            <div style={{background: 'white', border: '1px solid #e5e7eb', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem'}}>
+              <h2 style={{fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem'}}>Boxplot Settings</h2>
+              
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem'}}>Select Gene:</label>
+                <select
+                  value={boxplotGene}
+                  onChange={(e) => setBoxplotGene(e.target.value)}
+                  style={{width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem', cursor: 'pointer'}}
+                >
+                  {expressedGenes.map(gene => (
+                    <option key={gene} value={gene}>{gene}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem'}}>Group By:</label>
+                <select
+                  value={boxplotGroupBy}
+                  onChange={(e) => setBoxplotGroupBy(e.target.value)}
+                  style={{width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem', cursor: 'pointer'}}
+                >
+                  <option value="indication">Indication</option>
+                  <option value="cellline">Cell Line</option>
+                </select>
+              </div>
+              
+              {boxplotGroupBy === 'cellline' && (
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem'}}>Filter by Indication:</label>
+                  <select
+                    value={selectedIndication}
+                    onChange={(e) => setSelectedIndication(e.target.value)}
+                    style={{width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.875rem', cursor: 'pointer'}}
+                  >
+                    <option value="all">All Indications</option>
+                    {availableIndications.map(ind => (
+                      <option key={ind} value={ind}>{ind}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            
+            <div style={{background: '#eff6ff', border: '1px solid #bfdbfe', padding: '1rem', borderRadius: '0.5rem', fontSize: '0.875rem'}}>
+              📊 Boxplot shows log2(expression + 1) values. Black dots represent individual cells with jitter for visibility.
+            </div>
+          </div>
+        )}
+        
+        <div style={{flex: 1}}>
+          {activeView === 'umap' && (
+            <>
+              <div style={{marginBottom: '2rem', position: 'relative'}}>
+                <div ref={clusterCanvasRef} style={{position: 'relative'}}></div>
+              </div>
+              
+              {selectedGenes.length > 0 && (
+                <div>
+                  <h2 style={{fontSize: '1.5rem', fontWeight: '600', marginBottom: '1rem'}}>Gene Expression UMAP</h2>
+                  {selectedGenes.map((gene, idx) => (
+                    <div key={gene} style={{marginBottom: '2rem', position: 'relative'}}>
+                      {data.expressionData[gene] ? (
+                        <div ref={el => geneCanvasRefs.current[idx] = el} style={{position: 'relative'}}></div>
+                      ) : (
+                        <div style={{textAlign: 'center', padding: '3rem', color: '#6b7280'}}>
+                          <p style={{fontSize: '1.125rem'}}>Expression data not available for {gene}</p>
+                          <p style={{fontSize: '0.875rem', marginTop: '0.5rem'}}>This gene may not be in the exported dataset</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {selectedGenes.length === 0 && (
+                <div style={{textAlign: 'center', padding: '3rem', color: '#6b7280'}}>
+                  <h3 style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>No genes selected</h3>
+                  <p>Select genes from the sidebar to visualize their expression.</p>
+                </div>
+              )}
+            </>
+          )}
+          
+          {activeView === 'boxplot' && (
+            <div style={{position: 'relative'}}>
+              {boxplotLoading ? (
+                <div style={{textAlign: 'center', padding: '3rem', color: '#6b7280'}}>
+                  <h3 style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>Loading boxplot...</h3>
+                  <p>Please wait</p>
+                </div>
+              ) : boxplotGene && data.expressionData[boxplotGene] ? (
+                <div ref={boxplotRef}></div>
+              ) : (
+                <div style={{textAlign: 'center', padding: '3rem', color: '#6b7280'}}>
+                  <h3 style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>No data available</h3>
+                  <p>Please select a gene with expression data</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
