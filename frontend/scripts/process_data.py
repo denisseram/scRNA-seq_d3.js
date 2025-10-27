@@ -99,7 +99,7 @@ for idx, cell_id in enumerate(adata.obs.index):
         'cluster': str(adata.obs['leiden'][idx])
     }
     
-    # Add metadata if available
+    # Add metadata
     for col in ['CellLine', 'Pool', 'Indication']:
         if col in adata.obs.columns:
             cell_info[col.lower()] = str(adata.obs[col][idx])
@@ -165,7 +165,7 @@ metadata = {
 with open(f'{output_dir}/metadata.json', 'w') as f:
     json.dump(metadata, f, indent=2)
 
-print(f"✓ Exported metadata")
+print(f"Exported metadata")
 
 # ==============================================================================
 # 4. option of exporting only a file with all data combined (only for small datasets))
